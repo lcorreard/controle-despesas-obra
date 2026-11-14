@@ -77,7 +77,6 @@ def exibir_logo(tamanho="pequeno"):
     return False
 
 # ==================== 🗄️ BANCO DE DADOS ====================
-@st.cache_resource
 def conectar_banco():
     conn = sqlite3.connect('despesas.db', check_same_thread=False)
     
@@ -132,12 +131,14 @@ def conectar_banco():
     for cat in default_cats:
         conn.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (cat,))
     
+    # Criar usuário admin se não existir
     admin_existe = conn.execute("SELECT id FROM usuarios WHERE username = 'admin'").fetchone()
     if not admin_existe:
         conn.execute(
             "INSERT INTO usuarios (username, senha, nome, pode_incluir, pode_editar, pode_excluir, eh_admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
             ('admin', hash_senha('admin123'), 'Administrador', 1, 1, 1, 1)
         )
+        print("✅ Usuário admin criado (login: admin / senha: admin123)")
     
     # Migrações automáticas
     colunas_despesas = [row[1] for row in conn.execute("PRAGMA table_info(despesas)").fetchall()]
@@ -153,42 +154,35 @@ def conectar_banco():
 
 conn = conectar_banco()
 
-# ==================== 📄 FUNÇÃO DE GERAÇÃO DE PDF (CABEÇALHO ALINHADO) ====================
+# ==================== 📄 FUNÇÃO DE GERAÇÃO DE PDF ====================
 def gerar_pdf_relatorio(df_despesas, titulo="Relatório de Despesas"):
-    pdf = FPDF(orientation='L')  # Paisagem
+    pdf = FPDF(orientation='L')
     pdf.add_page()
     
-    # ⭐ Definir fonte antes de qualquer cell()
     pdf.set_font('Helvetica', 'B', 14)
     
-    # ⭐ CÁLCULO EXATO: A4 paisagem = 297mm, margens = 10mm cada lado = 277mm úteis
     margem = 10
-    largura_total = 277  # Largura exata da área útil
+    largura_total = 277
     
-    # 1. Barra vermelha com largura EXATA da área útil
     pdf.set_fill_color(191, 23, 23)
     pdf.set_xy(margem, 8)
     pdf.cell(largura_total, 12, '', fill=True)
     
-    # 2. Título centralizado na barra vermelha
     pdf.set_xy(margem, 8)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(largura_total, 12, 'Sistema de Controle de Despesa - Obra', align='C')
     
     pdf.ln(15)
     
-    # 3. Logo no canto superior esquerdo (fora da barra)
     logo_bytes = carregar_logo_bytes()
     if logo_bytes:
         pdf.image(logo_bytes, x=margem, y=24, w=22)
     
-    # 4. Título do relatório CENTRALIZADO na página
     pdf.set_y(26)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', 'B', 11)
     pdf.cell(0, 8, titulo.upper(), ln=True, align='C')
     
-    # 5. Data de geração
     pdf.set_font('Helvetica', '', 8)
     pdf.cell(0, 5, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(4)
@@ -197,9 +191,8 @@ def gerar_pdf_relatorio(df_despesas, titulo="Relatório de Despesas"):
         pdf.set_font('Helvetica', 'I', 10)
         pdf.cell(0, 8, 'Nenhuma despesa encontrada.', ln=True, align='C')
     else:
-        # ⭐ LARGURAS RECALCULADAS para somar EXATAMENTE 277mm
         colunas = ['DATA', 'DESCRIÇÃO', 'QTD', 'CATEGORIA', 'SUBGRUPO', 'FORNECEDOR', 'PAGAMENTO', 'VALOR']
-        larguras = [20, 80, 12, 25, 22, 70, 28, 20]  # Total = 277mm ✓
+        larguras = [20, 80, 12, 25, 22, 70, 28, 20]
         
         pdf.set_fill_color(191, 23, 23)
         pdf.set_text_color(255, 255, 255)
@@ -301,7 +294,8 @@ def tela_login():
                         'pode_incluir': bool(usuario.iloc[0]['pode_incluir']),
                         'pode_editar': bool(usuario.iloc[0]['pode_editar']),
                         'pode_excluir': bool(usuario.iloc[0]['pode_excluir']),
-                        'eh_admin': bool(usuario.iloc[0]['eh_admin'])
+                        'eh_admin': bool(usuario.iloc[0]['eh_admin']),
+                        'senha_hash': usuario.iloc[0]['senha']
                     }
                     st.session_state.msg_sucesso = f"✅ Bem-vindo, {st.session_state.usuario_logado['nome']}!"
                     st.rerun()
@@ -342,7 +336,6 @@ def main():
         st.success(st.session_state.msg_sucesso)
         st.session_state.msg_sucesso = None
     
-    # Cabeçalho com logo pequena
     col_logo, col_info, col_logout = st.columns([1, 3, 1])
     with col_logo:
         if not exibir_logo("pequeno"):
@@ -707,16 +700,20 @@ def main():
     if usuario['eh_admin'] and "👥 Usuários" in abas:
         with tabs[abas.index("👥 Usuários")]:
             st.header("👥 Gerenciamento de Usuários")
-            st.info("💡 Aqui você pode criar novos usuários e definir suas permissões.")
+            st.info("💡 Aqui você pode criar novos usuários (comuns ou administradores) e gerenciar permissões.")
             
+            # SEÇÃO: NOVO USUÁRIO
+            st.subheader("➕ Novo Usuário")
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                st.subheader("➕ Novo Usuário")
                 with st.form("form_novo_usuario"):
                     novo_username = st.text_input("Usuário (login)", placeholder="Ex: joao.silva")
                     novo_nome = st.text_input("Nome Completo", placeholder="Ex: João da Silva")
-                    nova_senha = st.text_input("Senha", type="password", placeholder="Mínimo 6 caracteres")
+                    nova_senha_user = st.text_input("Senha", type="password", placeholder="Mínimo 6 caracteres")
+                    
+                    # Admin pode criar outros Admins
+                    eh_admin_novo = st.checkbox("⭐ Tornar Administrador", value=False)
                     
                     st.markdown("**Permissões:**")
                     pode_incluir = st.checkbox("✅ Pode Incluir novas despesas", value=True)
@@ -724,15 +721,15 @@ def main():
                     pode_excluir = st.checkbox("✅ Pode Excluir despesas", value=True)
                     
                     if st.form_submit_button("Cadastrar Usuário", use_container_width=True, type="primary"):
-                        if not novo_username or not novo_nome or not nova_senha:
+                        if not novo_username or not novo_nome or not nova_senha_user:
                             st.error("❌ Preencha todos os campos!")
-                        elif len(nova_senha) < 6:
+                        elif len(nova_senha_user) < 6:
                             st.error("❌ A senha deve ter no mínimo 6 caracteres!")
                         else:
                             try:
                                 conn.execute(
-                                    "INSERT INTO usuarios (username, senha, nome, pode_incluir, pode_editar, pode_excluir, eh_admin) VALUES (?, ?, ?, ?, ?, ?, 0)",
-                                    (novo_username, hash_senha(nova_senha), novo_nome, int(pode_incluir), int(pode_editar), int(pode_excluir))
+                                    "INSERT INTO usuarios (username, senha, nome, pode_incluir, pode_editar, pode_excluir, eh_admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                    (novo_username, hash_senha(nova_senha_user), novo_nome, int(pode_incluir), int(pode_editar), int(pode_excluir), int(eh_admin_novo))
                                 )
                                 conn.commit()
                                 st.success(f"✅ Usuário '{novo_username}' criado com sucesso!")
@@ -742,15 +739,22 @@ def main():
             
             with col2:
                 st.subheader("📋 Usuários Cadastrados")
-                df_usuarios = pd.read_sql_query("SELECT * FROM usuarios ORDER BY username", conn)
+                df_usuarios = pd.read_sql_query("SELECT * FROM usuarios ORDER BY eh_admin DESC, username", conn)
                 
                 if not df_usuarios.empty:
                     for _, u in df_usuarios.iterrows():
+                        eh_admin_u = bool(u['eh_admin'])
+                        
+                        # Admin pode deletar qualquer usuário, exceto ele mesmo
+                        pode_deletar = (u['id'] != usuario['id'])
+                        
+                        # Badge
+                        badge = '<span style="color: #BF1717; font-weight: bold;">[ADMIN]</span>' if eh_admin_u else ''
+                        
                         with st.container():
                             st.markdown(f"""
                             <div style="background-color: white; padding: 12px; border-radius: 6px; border: 1px solid #A6A6A6; margin-bottom: 8px;">
-                                <strong>👤 {u['nome']}</strong> ({u['username']})
-                                {'<span style="color: #BF1717; font-weight: bold;">[ADMIN]</span>' if u['eh_admin'] else ''}
+                                <strong>👤 {u['nome']}</strong> ({u['username']}) {badge}
                                 <br>
                                 <small>
                                     {'✅ Incluir' if u['pode_incluir'] else '❌ Incluir'} | 
@@ -760,7 +764,7 @@ def main():
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            if not u['eh_admin']:
+                            if pode_deletar:
                                 col_perm, col_del = st.columns([3, 1])
                                 with col_perm:
                                     if st.button("✏️ Permissões", key=f"perm_{u['id']}"):
@@ -768,11 +772,20 @@ def main():
                                         st.rerun()
                                 with col_del:
                                     if st.button("🗑️", key=f"del_user_{u['id']}"):
-                                        conn.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
-                                        conn.commit()
-                                        st.success(f"Usuário '{u['username']}' excluído!")
-                                        st.rerun()
+                                        if eh_admin_u:
+                                            st.warning(f"⚠️ Você está prestes a deletar o ADMIN '{u['username']}'. Esta ação não pode ser desfeita!")
+                                            if st.button(f"✅ Sim, deletar {u['username']}", key=f"conf_del_{u['id']}", type="primary"):
+                                                conn.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
+                                                conn.commit()
+                                                st.success(f"Admin '{u['username']}' deletado!")
+                                                st.rerun()
+                                        else:
+                                            conn.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
+                                            conn.commit()
+                                            st.success(f"Usuário '{u['username']}' deletado!")
+                                            st.rerun()
             
+            # Modal de edição de permissões
             if st.session_state.editando_usuario_id is not None:
                 st.markdown("---")
                 st.warning(f"✏️ **Editando permissões do usuário #{st.session_state.editando_usuario_id}**")
@@ -780,8 +793,13 @@ def main():
                 user_edit = pd.read_sql_query("SELECT * FROM usuarios WHERE id = ?", conn, params=(st.session_state.editando_usuario_id,))
                 if not user_edit.empty:
                     ue = user_edit.iloc[0]
+                    
                     with st.form("form_editar_usuario"):
                         st.write(f"**Usuário:** {ue['username']} - {ue['nome']}")
+                        
+                        # Admin pode tornar usuário em admin
+                        eh_admin_edit = st.checkbox("⭐ Tornar Administrador", value=bool(ue['eh_admin']))
+                        
                         p_inc = st.checkbox("Pode Incluir", value=bool(ue['pode_incluir']))
                         p_edt = st.checkbox("Pode Editar", value=bool(ue['pode_editar']))
                         p_exc = st.checkbox("Pode Excluir", value=bool(ue['pode_excluir']))
@@ -790,8 +808,8 @@ def main():
                         with col1:
                             if st.form_submit_button("💾 Salvar Permissões", use_container_width=True, type="primary"):
                                 conn.execute(
-                                    "UPDATE usuarios SET pode_incluir=?, pode_editar=?, pode_excluir=? WHERE id=?",
-                                    (int(p_inc), int(p_edt), int(p_exc), st.session_state.editando_usuario_id)
+                                    "UPDATE usuarios SET pode_incluir=?, pode_editar=?, pode_excluir=?, eh_admin=? WHERE id=?",
+                                    (int(p_inc), int(p_edt), int(p_exc), int(eh_admin_edit), st.session_state.editando_usuario_id)
                                 )
                                 conn.commit()
                                 st.session_state.editando_usuario_id = None

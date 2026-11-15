@@ -131,9 +131,9 @@ def conectar_banco():
     for cat in default_cats:
         conn.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (cat,))
     
-    # Criar usuário admin se não existir
-    admin_existe = conn.execute("SELECT id FROM usuarios WHERE username = 'admin'").fetchone()
-    if not admin_existe:
+    # ⭐ CORREÇÃO: Só criar o admin se o banco estiver TOTALMENTE VAZIO (primeira execução)
+    total_usuarios = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+    if total_usuarios == 0:
         conn.execute(
             "INSERT INTO usuarios (username, senha, nome, pode_incluir, pode_editar, pode_excluir, eh_admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
             ('admin', hash_senha('admin123'), 'Administrador', 1, 1, 1, 1)
@@ -305,6 +305,8 @@ def logout():
     st.session_state.detalhes_compra_key = None
     st.session_state.editando_despesa_id = None
     st.session_state.editando_usuario_id = None
+    st.session_state.confirmar_delecao_id = None
+    st.session_state.aba_ativa = None
     st.rerun()
 
 # ==================== 🏠 APLICAÇÃO PRINCIPAL ====================
@@ -331,6 +333,10 @@ def main():
         st.session_state.reset_seed = 0
     if 'editando_usuario_id' not in st.session_state:
         st.session_state.editando_usuario_id = None
+    if 'confirmar_delecao_id' not in st.session_state:
+        st.session_state.confirmar_delecao_id = None
+    if 'aba_ativa' not in st.session_state:
+        st.session_state.aba_ativa = None
     
     if st.session_state.msg_sucesso:
         st.success(st.session_state.msg_sucesso)
@@ -357,7 +363,8 @@ def main():
         abas.append("👥 Usuários")
     abas.append("⚙️ Configurações")
     
-    tabs = st.tabs(abas)
+    default_tab = st.session_state.aba_ativa if st.session_state.aba_ativa in abas else None
+    tabs = st.tabs(abas, default=default_tab)
     
     # ==================== ABA: NOVA DESPESA ====================
     if usuario['pode_incluir'] and "➕ Nova Despesa" in abas:
@@ -712,7 +719,6 @@ def main():
                     novo_nome = st.text_input("Nome Completo", placeholder="Ex: João da Silva")
                     nova_senha_user = st.text_input("Senha", type="password", placeholder="Mínimo 6 caracteres")
                     
-                    # Admin pode criar outros Admins
                     eh_admin_novo = st.checkbox("⭐ Tornar Administrador", value=False)
                     
                     st.markdown("**Permissões:**")
@@ -733,6 +739,7 @@ def main():
                                 )
                                 conn.commit()
                                 st.success(f"✅ Usuário '{novo_username}' criado com sucesso!")
+                                st.session_state.aba_ativa = "👥 Usuários"
                                 st.rerun()
                             except sqlite3.IntegrityError:
                                 st.error("❌ Este nome de usuário já existe!")
@@ -744,11 +751,8 @@ def main():
                 if not df_usuarios.empty:
                     for _, u in df_usuarios.iterrows():
                         eh_admin_u = bool(u['eh_admin'])
-                        
-                        # Admin pode deletar qualquer usuário, exceto ele mesmo
                         pode_deletar = (u['id'] != usuario['id'])
                         
-                        # Badge
                         badge = '<span style="color: #BF1717; font-weight: bold;">[ADMIN]</span>' if eh_admin_u else ''
                         
                         with st.container():
@@ -769,20 +773,29 @@ def main():
                                 with col_perm:
                                     if st.button("✏️ Permissões", key=f"perm_{u['id']}"):
                                         st.session_state.editando_usuario_id = u['id']
+                                        st.session_state.aba_ativa = "👥 Usuários"
                                         st.rerun()
                                 with col_del:
-                                    if st.button("🗑️", key=f"del_user_{u['id']}"):
-                                        if eh_admin_u:
-                                            st.warning(f"⚠️ Você está prestes a deletar o ADMIN '{u['username']}'. Esta ação não pode ser desfeita!")
-                                            if st.button(f"✅ Sim, deletar {u['username']}", key=f"conf_del_{u['id']}", type="primary"):
+                                    if st.session_state.confirmar_delecao_id == u['id']:
+                                        st.warning(f"⚠️ Você está prestes a deletar {u['username']}. Esta ação não pode ser desfeita!")
+                                        col_sim, col_nao = st.columns(2)
+                                        with col_sim:
+                                            if st.button(f"✅ Sim, deletar", key=f"sim_del_{u['id']}", type="primary"):
                                                 conn.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
                                                 conn.commit()
-                                                st.success(f"Admin '{u['username']}' deletado!")
+                                                st.session_state.confirmar_delecao_id = None
+                                                st.success(f"Usuário '{u['username']}' deletado!")
+                                                st.session_state.aba_ativa = "👥 Usuários"
                                                 st.rerun()
-                                        else:
-                                            conn.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
-                                            conn.commit()
-                                            st.success(f"Usuário '{u['username']}' deletado!")
+                                        with col_nao:
+                                            if st.button("❌ Cancelar", key=f"nao_del_{u['id']}"):
+                                                st.session_state.confirmar_delecao_id = None
+                                                st.session_state.aba_ativa = "👥 Usuários"
+                                                st.rerun()
+                                    else:
+                                        if st.button("🗑️", key=f"del_user_{u['id']}"):
+                                            st.session_state.confirmar_delecao_id = u['id']
+                                            st.session_state.aba_ativa = "👥 Usuários"
                                             st.rerun()
             
             # Modal de edição de permissões
@@ -797,7 +810,6 @@ def main():
                     with st.form("form_editar_usuario"):
                         st.write(f"**Usuário:** {ue['username']} - {ue['nome']}")
                         
-                        # Admin pode tornar usuário em admin
                         eh_admin_edit = st.checkbox("⭐ Tornar Administrador", value=bool(ue['eh_admin']))
                         
                         p_inc = st.checkbox("Pode Incluir", value=bool(ue['pode_incluir']))
@@ -814,10 +826,12 @@ def main():
                                 conn.commit()
                                 st.session_state.editando_usuario_id = None
                                 st.success("✅ Permissões atualizadas!")
+                                st.session_state.aba_ativa = "👥 Usuários"
                                 st.rerun()
                         with col2:
                             if st.form_submit_button("❌ Cancelar", use_container_width=True):
                                 st.session_state.editando_usuario_id = None
+                                st.session_state.aba_ativa = "👥 Usuários"
                                 st.rerun()
     
     # ==================== ABA: CONFIGURAÇÕES ====================

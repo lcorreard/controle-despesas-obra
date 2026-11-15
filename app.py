@@ -131,7 +131,7 @@ def conectar_banco():
     for cat in default_cats:
         conn.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (cat,))
     
-    # ⭐ CORREÇÃO: Só criar o admin se o banco estiver TOTALMENTE VAZIO (primeira execução)
+    # ⭐ Só cria o admin se o banco estiver TOTALMENTE VAZIO (primeira execução)
     total_usuarios = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
     if total_usuarios == 0:
         conn.execute(
@@ -148,6 +148,10 @@ def conectar_banco():
         conn.execute("ALTER TABLE despesas ADD COLUMN observacoes TEXT")
     if 'quantidade' not in colunas_despesas:
         conn.execute("ALTER TABLE despesas ADD COLUMN quantidade REAL DEFAULT 1")
+    
+    # ⭐ Corrige registros existentes com NULL no nome_arquivo
+    conn.execute("UPDATE despesas SET nome_arquivo = '' WHERE nome_arquivo IS NULL")
+    conn.execute("UPDATE despesas SET caminho_anexo = '' WHERE caminho_anexo IS NULL")
     
     conn.commit()
     return conn
@@ -497,8 +501,9 @@ def main():
                         if not fornecedor:
                             st.error("❌ Preencha o nome do fornecedor!")
                         else:
-                            caminho_anexo = None
-                            nome_arquivo = None
+                            # ⭐ CORREÇÃO: Usar string vazia em vez de None
+                            caminho_anexo = ''
+                            nome_arquivo = ''
                             if arquivo is not None:
                                 pasta_uploads = "uploads"
                                 if not os.path.exists(pasta_uploads): os.makedirs(pasta_uploads)
@@ -635,6 +640,8 @@ def main():
                 st.info("Nenhuma despesa registrada ainda.")
             else:
                 df['data_fmt'] = pd.to_datetime(df['data_compra']).dt.strftime('%d/%m/%Y')
+                # ⭐ CORREÇÃO: Tratar valores nulos no nome_arquivo
+                df['nome_arquivo'] = df['nome_arquivo'].fillna('')
                 compras = df.groupby(['data_compra', 'fornecedor', 'nome_arquivo']).agg({'valor': 'sum', 'forma_pagamento': 'first', 'id': 'count'}).reset_index()
                 compras.columns = ['data_compra', 'fornecedor', 'nome_arquivo', 'total', 'forma_pagamento', 'qtd_itens']
                 compras['data_fmt'] = pd.to_datetime(compras['data_compra']).dt.strftime('%d/%m/%Y')
